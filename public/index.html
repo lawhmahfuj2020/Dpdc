@@ -48,6 +48,34 @@
     margin-bottom: 18px;
     box-shadow: 0 2px 10px rgba(43, 40, 30, 0.05);
   }
+  .search-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .search-row input {
+    flex: 1 1 140px;
+    min-width: 0;
+    font-size: 1rem;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+  }
+  .search-row input:focus { outline: 2px solid var(--accent); }
+  .search-row button {
+    flex: 0 0 auto;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0 20px;
+    height: 46px;
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+  }
+  .search-row button:active { opacity: 0.85; }
+  .search-hint { color: var(--muted); font-size: 0.8rem; margin-top: 10px; }
   .balance {
     font-size: 2.8rem;
     font-weight: 700;
@@ -89,13 +117,23 @@
   }
   .refresh-note { color: var(--muted); font-size: 0.82rem; text-align: center; margin-top: 14px; line-height: 1.5; }
   .chart-title { font-family: 'Merriweather', serif; font-size: 1.05rem; margin-bottom: 14px; color: var(--text); }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
   <h1>⚡ DPDC Prepaid</h1>
-  <div class="sub" id="customerLine">Loading account…</div>
+  <div class="sub" id="customerLine">Enter your account number below</div>
 
-  <div class="card" id="balanceCard">
+  <div class="card">
+    <div class="label" style="margin-bottom:10px;">Account Number</div>
+    <div class="search-row">
+      <input id="customerInput" type="text" inputmode="numeric" placeholder="e.g. 1234567890" />
+      <button id="checkBtn">Check</button>
+    </div>
+    <div class="search-hint">This is remembered on this device only — it's sent straight to DPDC's own balance-check service, nothing is stored on the server unless you set it as the default on Render.</div>
+  </div>
+
+  <div class="card hidden" id="balanceCard">
     <div class="label">Current Balance</div>
     <div class="balance" id="balanceVal">—</div>
     <div class="grid">
@@ -118,20 +156,28 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card hidden" id="chartCard">
     <div class="chart-title">Balance Trend</div>
     <canvas id="historyChart" height="200"></canvas>
-    <div class="refresh-note">Logged automatically by the server. DPDC doesn't expose historical unit-usage directly — this trend line, and the taka spent between points, is the closest proxy.</div>
+    <div class="refresh-note">Logged automatically by the server (only for the account number set as the server default on Render). DPDC doesn't expose historical unit-usage directly — this trend line, and the taka spent between points, is the closest proxy.</div>
   </div>
 
-  <div class="card" id="errorCard" style="display:none;">
+  <div class="card hidden" id="errorCard">
     <div class="error" id="errorText"></div>
   </div>
 
 <script>
-async function loadBalance() {
+const STORAGE_KEY = 'dpdc_customer_number';
+
+function show(el) { el.classList.remove('hidden'); }
+function hide(el) { el.classList.add('hidden'); }
+
+async function loadBalance(customerNumber) {
+  const errorCard = document.getElementById('errorCard');
+  const balanceCard = document.getElementById('balanceCard');
   try {
-    const res = await fetch('/api/balance');
+    const url = '/api/balance' + (customerNumber ? '?customerNumber=' + encodeURIComponent(customerNumber) : '');
+    const res = await fetch(url);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
@@ -151,10 +197,12 @@ async function loadBalance() {
     document.getElementById('accountTypeVal').textContent = data.accountType || '—';
     document.getElementById('accountIdVal').textContent = data.accountId || '—';
 
-    document.getElementById('errorCard').style.display = 'none';
+    hide(errorCard);
+    show(balanceCard);
   } catch (err) {
-    document.getElementById('errorCard').style.display = 'block';
     document.getElementById('errorText').textContent = 'Could not load balance: ' + err.message;
+    show(errorCard);
+    hide(balanceCard);
   }
 }
 
@@ -163,6 +211,9 @@ async function loadHistory() {
   try {
     const res = await fetch('/api/history');
     const history = await res.json();
+    if (!history.length) return;
+    show(document.getElementById('chartCard'));
+
     const labels = history.map(h => new Date(h.timestamp).toLocaleDateString());
     const values = history.map(h => h.balanceRemaining);
 
@@ -197,9 +248,29 @@ async function loadHistory() {
   }
 }
 
-loadBalance();
+function runCheck() {
+  const val = document.getElementById('customerInput').value.trim();
+  if (!val) return;
+  localStorage.setItem(STORAGE_KEY, val);
+  loadBalance(val);
+}
+
+document.getElementById('checkBtn').addEventListener('click', runCheck);
+document.getElementById('customerInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') runCheck();
+});
+
+// On load: use whatever's saved on this device, else fall back to the server's
+// own default (DPDC_CUSTOMER_NUMBER env var on Render), if any.
+const saved = localStorage.getItem(STORAGE_KEY);
+if (saved) {
+  document.getElementById('customerInput').value = saved;
+  loadBalance(saved);
+} else {
+  loadBalance();
+}
 loadHistory();
-setInterval(loadBalance, 5 * 60 * 1000); // refresh view every 5 min
+setInterval(() => loadBalance(document.getElementById('customerInput').value.trim() || undefined), 5 * 60 * 1000);
 </script>
 </body>
 </html>
