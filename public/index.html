@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DPDC Prepaid Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f0e3;
+    --card: #fffdf6;
+    --text: #2c2a22;
+    --muted: #7c7562;
+    --accent: #0b5e3b;
+    --accent-soft: #e5efe6;
+    --warn: #a4341f;
+    --warn-soft: #f6e6e1;
+    --border: #e6ddc7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 22px 18px 40px;
+    max-width: 720px;
+    margin: 0 auto;
+    line-height: 1.5;
+  }
+  h1 {
+    font-family: 'Merriweather', serif;
+    font-size: 1.5rem;
+    margin: 0 0 4px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sub { color: var(--muted); font-size: 0.95rem; margin-bottom: 22px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 10px rgba(43, 40, 30, 0.05);
+  }
+  .balance {
+    font-size: 2.8rem;
+    font-weight: 700;
+    font-family: 'Merriweather', serif;
+    margin-top: 4px;
+  }
+  .balance.low { color: var(--warn); }
+  .balance.ok { color: var(--accent); }
+  .label {
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }
+  .grid .item {
+    background: var(--accent-soft);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .grid .item .val { font-size: 1.1rem; font-weight: 600; margin-top: 4px; color: var(--text); }
+  .status-pill {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+  }
+  .status-pill.active { background: #d7ead9; color: var(--accent); }
+  .status-pill.other { background: var(--warn-soft); color: var(--warn); }
+  canvas { width: 100% !important; }
+  .error {
+    color: var(--warn);
+    font-size: 0.95rem;
+    background: var(--warn-soft);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .refresh-note { color: var(--muted); font-size: 0.82rem; text-align: center; margin-top: 14px; line-height: 1.5; }
+  .chart-title { font-family: 'Merriweather', serif; font-size: 1.05rem; margin-bottom: 14px; color: var(--text); }
+</style>
+</head>
+<body>
+  <h1>⚡ DPDC Prepaid</h1>
+  <div class="sub" id="customerLine">Loading account…</div>
+
+  <div class="card" id="balanceCard">
+    <div class="label">Current Balance</div>
+    <div class="balance" id="balanceVal">—</div>
+    <div class="grid">
+      <div class="item">
+        <div class="label">Status</div>
+        <div class="val" id="statusVal">—</div>
+      </div>
+      <div class="item">
+        <div class="label">Min. Recharge</div>
+        <div class="val" id="minRechargeVal">—</div>
+      </div>
+      <div class="item">
+        <div class="label">Account Type</div>
+        <div class="val" id="accountTypeVal">—</div>
+      </div>
+      <div class="item">
+        <div class="label">Account ID</div>
+        <div class="val" id="accountIdVal">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title">Balance Trend</div>
+    <canvas id="historyChart" height="200"></canvas>
+    <div class="refresh-note">Logged automatically by the server. DPDC doesn't expose historical unit-usage directly — this trend line, and the taka spent between points, is the closest proxy.</div>
+  </div>
+
+  <div class="card" id="errorCard" style="display:none;">
+    <div class="error" id="errorText"></div>
+  </div>
+
+<script>
+async function loadBalance() {
+  try {
+    const res = await fetch('/api/balance');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    document.getElementById('customerLine').textContent =
+      `${data.customerName || 'Account'} · ${data.customerClass || ''}`;
+
+    const balance = parseFloat(data.balanceRemaining);
+    const balEl = document.getElementById('balanceVal');
+    balEl.textContent = isNaN(balance) ? '—' : `৳ ${balance.toFixed(2)}`;
+    const minRecharge = parseFloat(data.minRecharge);
+    balEl.className = 'balance ' + (!isNaN(balance) && !isNaN(minRecharge) && balance <= minRecharge ? 'low' : 'ok');
+
+    const statusEl = document.getElementById('statusVal');
+    statusEl.innerHTML = `<span class="status-pill ${data.connectionStatus === 'Active' ? 'active' : 'other'}">${data.connectionStatus || 'Unknown'}</span>`;
+
+    document.getElementById('minRechargeVal').textContent = isNaN(minRecharge) ? '—' : `৳ ${minRecharge.toFixed(2)}`;
+    document.getElementById('accountTypeVal').textContent = data.accountType || '—';
+    document.getElementById('accountIdVal').textContent = data.accountId || '—';
+
+    document.getElementById('errorCard').style.display = 'none';
+  } catch (err) {
+    document.getElementById('errorCard').style.display = 'block';
+    document.getElementById('errorText').textContent = 'Could not load balance: ' + err.message;
+  }
+}
+
+let chart;
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const history = await res.json();
+    const labels = history.map(h => new Date(h.timestamp).toLocaleDateString());
+    const values = history.map(h => h.balanceRemaining);
+
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Balance (৳)',
+          data: values,
+          borderColor: '#0b5e3b',
+          backgroundColor: 'rgba(11,94,59,0.08)',
+          fill: true,
+          tension: 0.25,
+          pointRadius: 2,
+          pointBackgroundColor: '#0b5e3b',
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#7c7562', maxTicksLimit: 8 }, grid: { color: '#e6ddc7' } },
+          y: { ticks: { color: '#7c7562' }, grid: { color: '#e6ddc7' } }
+        }
+      }
+    });
+  } catch (err) {
+    console.error('history load failed', err);
+  }
+}
+
+loadBalance();
+loadHistory();
+setInterval(loadBalance, 5 * 60 * 1000); // refresh view every 5 min
+</script>
+</body>
+</html>
