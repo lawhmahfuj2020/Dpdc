@@ -48,6 +48,9 @@ function writeHistory(entries) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(entries, null, 2));
 }
 
+const BROWSER_UA =
+  "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+
 async function getAccessToken() {
   const res = await fetch(AUTH_URL, {
     method: "POST",
@@ -56,10 +59,15 @@ async function getAccessToken() {
       clientSecret: CLIENT_SECRET,
       tenantCode: TENANT_CODE,
       "Content-Type": "application/json",
+      "User-Agent": BROWSER_UA,
+      Accept: "application/json",
     },
     body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(`Auth failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Auth failed: ${res.status} — ${body.slice(0, 200)}`);
+  }
   const data = await res.json();
   if (!data.access_token) throw new Error("No access_token in auth response");
   return data.access_token;
@@ -92,10 +100,15 @@ async function fetchBalance(customerNumber) {
       accesstoken: token,
       tenantCode: TENANT_CODE,
       "Content-Type": "application/json",
+      "User-Agent": BROWSER_UA,
+      Accept: "application/json",
     },
     body: JSON.stringify({ query }),
   });
-  if (!res.ok) throw new Error(`Usage service failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Usage service failed: ${res.status} — ${body.slice(0, 200)}`);
+  }
   const json = await res.json();
   if (json.errors) throw new Error(json.errors.map((e) => e.message).join("; "));
   const details = json?.data?.postBalanceDetails;
