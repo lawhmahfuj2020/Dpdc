@@ -168,19 +168,89 @@
 
 <script>
 const STORAGE_KEY = 'dpdc_customer_number';
+const DPDC_AUTH_URL = 'https://amiapp.dpdc.org.bd/auth/login/generate-bearer';
+const DPDC_USAGE_URL = 'https://amiapp.dpdc.org.bd/usage/usage-service';
+const DPDC_CLIENT_ID = 'auth-ui';
+const DPDC_CLIENT_SECRET = '0yFsAl4nN9jX1GGkgOrvpUxDarf2DT40';
+const DPDC_TENANT_CODE = 'DPDC';
 
 function show(el) { el.classList.remove('hidden'); }
 function hide(el) { el.classList.add('hidden'); }
 
+// Calls DPDC directly from this device's own network (not through the Render
+// server) — DPDC's API may reject requests from servers hosted outside
+// Bangladesh, so doing this from the phone itself is the workaround.
+async function fetchBalanceDirect(customerNumber) {
+  const authRes = await fetch(DPDC_AUTH_URL, {
+    method: 'POST',
+    headers: {
+      clientId: DPDC_CLIENT_ID,
+      clientSecret: DPDC_CLIENT_SECRET,
+      tenantCode: DPDC_TENANT_CODE,
+      'Content-Type': 'application/json',
+    },
+    body: '{}',
+  });
+  if (!authRes.ok) throw new Error(`Auth failed: ${authRes.status}`);
+  const authData = await authRes.json();
+  const token = authData.access_token;
+  if (!token) throw new Error('No access token returned');
+
+  const query = `query{
+    postBalanceDetails(input: {
+      customerNumber: "${customerNumber}",
+      tenantCode: "${DPDC_TENANT_CODE}"
+    }) {
+      accountId customerName customerClass mobileNumber emailId
+      accountType balanceRemaining connectionStatus customerType minRecharge
+    }
+  }`;
+
+  const usageRes = await fetch(DPDC_USAGE_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      accesstoken: token,
+      tenantCode: DPDC_TENANT_CODE,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+  if (!usageRes.ok) throw new Error(`Usage service failed: ${usageRes.status}`);
+  const json = await usageRes.json();
+  if (json.errors) throw new Error(json.errors.map(e => e.message).join('; '));
+  const details = json?.data?.postBalanceDetails;
+  if (!details) throw new Error('No balance data returned');
+  return details;
+}
+
 async function loadBalance(customerNumber) {
   const errorCard = document.getElementById('errorCard');
   const balanceCard = document.getElementById('balanceCard');
+  let data;
+  let directError;
   try {
-    const url = '/api/balance' + (customerNumber ? '?customerNumber=' + encodeURIComponent(customerNumber) : '');
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
+    data = await fetchBalanceDirect(customerNumber);
+  } catch (err) {
+    directError = err.message;
+    // Fall back to the server route (useful if the direct browser call is
+    // blocked by CORS rather than actually denied).
+    try {
+      const url = '/api/balance' + (customerNumber ? '?customerNumber=' + encodeURIComponent(customerNumber) : '');
+      const res = await fetch(url);
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      data = json;
+    } catch (err2) {
+      document.getElementById('errorText').textContent =
+        `Direct check failed: ${directError} | Server check failed: ${err2.message}`;
+      show(errorCard);
+      hide(balanceCard);
+      return;
+    }
+  }
 
+  try {
     document.getElementById('customerLine').textContent =
       `${data.customerName || 'Account'} · ${data.customerClass || ''}`;
 
@@ -200,7 +270,7 @@ async function loadBalance(customerNumber) {
     hide(errorCard);
     show(balanceCard);
   } catch (err) {
-    document.getElementById('errorText').textContent = 'Could not load balance: ' + err.message;
+    document.getElementById('errorText').textContent = 'Could not render balance: ' + err.message;
     show(errorCard);
     hide(balanceCard);
   }
